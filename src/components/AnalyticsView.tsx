@@ -17,20 +17,275 @@ import {
 } from 'recharts';
 import { 
   TrendingUp, 
+  TrendingDown,
   PieChart as PieIcon, 
   BarChart3, 
   Layers, 
   Calendar, 
   Percent, 
   ArrowUpRight, 
-  Info 
+  ArrowDownRight,
+  Info,
+  Flame,
+  Award,
+  CheckCircle2,
+  Clock,
+  Sparkles
 } from 'lucide-react';
+import { MonthlyReturn } from '../types';
 
 export const AnalyticsView: React.FC = () => {
   const { positions, historyData, monthlyReturns, summary } = usePortfolio();
 
   const [timeframe, setTimeframe] = useState<'1M' | '3M' | '6M' | '1Y' | 'ALL'>('1Y');
   const [allocationMode, setAllocationMode] = useState<'assetClass' | 'holdings'>('assetClass');
+
+  // Heatmap year selection (defaults to the current/latest year available, e.g. 2026)
+  const availableHeatmapYears = useMemo(() => {
+    const years = Array.from(new Set(monthlyReturns.map(m => m.year))).sort((a, b) => b - a);
+    return years.length > 0 ? years : [2026];
+  }, [monthlyReturns]);
+
+  const [heatmapYear, setHeatmapYear] = useState<number>(() => {
+    const years = Array.from(new Set(monthlyReturns.map(m => m.year))).sort((a, b) => b - a);
+    return years[0] || 2026;
+  });
+
+  // Selected month for detailed inspection
+  const [inspectedMonthNum, setInspectedMonthNum] = useState<number | null>(null);
+
+  // Month metadata and data linking for the selected year
+  const currentYearMonths = useMemo(() => {
+    const monthsMeta = [
+      { num: 1, name: 'Január', short: 'Jan' },
+      { num: 2, name: 'Február', short: 'Feb' },
+      { num: 3, name: 'Március', short: 'Már' },
+      { num: 4, name: 'Április', short: 'Ápr' },
+      { num: 5, name: 'Május', short: 'Máj' },
+      { num: 6, name: 'Június', short: 'Jún' },
+      { num: 7, name: 'Július', short: 'Júl' },
+      { num: 8, name: 'Augusztus', short: 'Aug' },
+      { num: 9, name: 'Szeptember', short: 'Szep' },
+      { num: 10, name: 'Október', short: 'Okt' },
+      { num: 11, name: 'November', short: 'Nov' },
+      { num: 12, name: 'December', short: 'Dec' },
+    ];
+
+    const yearData = monthlyReturns.filter(m => m.year === heatmapYear);
+
+    return monthsMeta.map(m => {
+      const data = yearData.find(r => r.month === m.num);
+      return {
+        ...m,
+        data,
+        isCompleted: !!data,
+      };
+    });
+  }, [monthlyReturns, heatmapYear]);
+
+  // Active inspected month object (defaults to the latest completed month of the selected year)
+  const activeInspectedMonth = useMemo(() => {
+    if (inspectedMonthNum !== null) {
+      return currentYearMonths.find(m => m.num === inspectedMonthNum)?.data || null;
+    }
+    const completed = [...currentYearMonths].reverse().find(m => m.data);
+    return completed?.data || null;
+  }, [currentYearMonths, inspectedMonthNum]);
+
+  // Yearly summary statistics for the heatmap
+  const heatmapYearStats = useMemo(() => {
+    const activeData = currentYearMonths.map(m => m.data).filter((d): d is MonthlyReturn => !!d);
+    if (activeData.length === 0) {
+      return {
+        compoundedYtd: 0,
+        totalRealizedProfit: 0,
+        winCount: 0,
+        lossCount: 0,
+        winRate: 0,
+        bestMonth: null,
+        worstMonth: null,
+        avgMonthlyReturn: 0,
+        totalTrades: 0,
+        completedCount: 0,
+      };
+    }
+
+    let compounded = 1;
+    let totalProfit = 0;
+    let winCount = 0;
+    let lossCount = 0;
+    let totalTrades = 0;
+    let best = activeData[0];
+    let worst = activeData[0];
+    let sumPct = 0;
+
+    activeData.forEach(d => {
+      compounded *= (1 + d.returnPercent / 100);
+      totalProfit += d.realizedProfit;
+      totalTrades += d.tradesCount;
+      sumPct += d.returnPercent;
+      if (d.returnPercent > 0) winCount++;
+      else if (d.returnPercent < 0) lossCount++;
+
+      if (d.returnPercent > best.returnPercent) best = d;
+      if (d.returnPercent < worst.returnPercent) worst = d;
+    });
+
+    const ytd = (compounded - 1) * 100;
+    const winRate = activeData.length > 0 ? (winCount / activeData.length) * 100 : 0;
+    const avgReturn = activeData.length > 0 ? sumPct / activeData.length : 0;
+
+    return {
+      compoundedYtd: Number(ytd.toFixed(2)),
+      totalRealizedProfit: totalProfit,
+      winCount,
+      lossCount,
+      winRate: Number(winRate.toFixed(1)),
+      bestMonth: best,
+      worstMonth: worst,
+      avgMonthlyReturn: Number(avgReturn.toFixed(2)),
+      totalTrades,
+      completedCount: activeData.length,
+    };
+  }, [currentYearMonths]);
+
+  // Quarterly breakdown for the year
+  const quarterlyData = useMemo(() => {
+    const quarters = [
+      { id: 'Q1', label: '1. Negyedév (Q1)', subtitle: 'Jan - Már', months: [1, 2, 3] },
+      { id: 'Q2', label: '2. Negyedév (Q2)', subtitle: 'Ápr - Jún', months: [4, 5, 6] },
+      { id: 'Q3', label: '3. Negyedév (Q3)', subtitle: 'Júl - Szep', months: [7, 8, 9] },
+      { id: 'Q4', label: '4. Negyedév (Q4)', subtitle: 'Okt - Dec', months: [10, 11, 12] },
+    ];
+
+    return quarters.map(q => {
+      const qMonths = currentYearMonths.filter(m => q.months.includes(m.num) && m.data);
+      if (qMonths.length === 0) {
+        return {
+          ...q,
+          returnPct: null,
+          profit: 0,
+          completedCount: 0,
+        };
+      }
+      let comp = 1;
+      let profit = 0;
+      qMonths.forEach(m => {
+        if (m.data) {
+          comp *= (1 + m.data.returnPercent / 100);
+          profit += m.data.realizedProfit;
+        }
+      });
+      const returnPct = Number(((comp - 1) * 100).toFixed(2));
+      return {
+        ...q,
+        returnPct,
+        profit,
+        completedCount: qMonths.length,
+      };
+    });
+  }, [currentYearMonths]);
+
+  // Helper function for color-coded intensity based on gain/loss percentage
+  const getIntensityInfo = (ret: number | undefined) => {
+    if (ret === undefined) {
+      return {
+        tileBg: 'border-dashed border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 text-slate-400 dark:text-slate-600',
+        textClass: 'text-slate-400 dark:text-slate-500',
+        badgeClass: 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400',
+        subTextClass: 'text-slate-400 dark:text-slate-500',
+        intensityLevel: 'Függőben',
+        indicatorColor: 'bg-slate-300 dark:bg-slate-700',
+      };
+    }
+
+    // Super Gain: >= +5.0%
+    if (ret >= 5.0) {
+      return {
+        tileBg: 'bg-emerald-600 dark:bg-emerald-500 text-white dark:text-slate-950 border-emerald-500 dark:border-emerald-400 shadow-sm shadow-emerald-600/20 dark:shadow-emerald-500/25',
+        textClass: 'text-white dark:text-slate-950 font-bold',
+        badgeClass: 'bg-emerald-700 dark:bg-emerald-950/80 text-emerald-100 dark:text-emerald-300',
+        subTextClass: 'text-emerald-100 dark:text-slate-900',
+        intensityLevel: 'Kiemelkedő (≥ +5%)',
+        indicatorColor: 'bg-emerald-400 dark:bg-emerald-300',
+      };
+    }
+    // High Gain: +3.0% to +5.0%
+    if (ret >= 3.0) {
+      return {
+        tileBg: 'bg-emerald-500 dark:bg-emerald-500/85 text-white dark:text-slate-950 border-emerald-400 dark:border-emerald-500 shadow-xs',
+        textClass: 'text-white dark:text-slate-950 font-bold',
+        badgeClass: 'bg-emerald-700/70 dark:bg-emerald-900/80 text-white dark:text-emerald-200',
+        subTextClass: 'text-emerald-100 dark:text-slate-900',
+        intensityLevel: 'Erős (+3% - +5%)',
+        indicatorColor: 'bg-emerald-300 dark:bg-emerald-200',
+      };
+    }
+    // Moderate Gain: +1.5% to +3.0%
+    if (ret >= 1.5) {
+      return {
+        tileBg: 'bg-emerald-100 dark:bg-emerald-500/40 text-emerald-950 dark:text-emerald-100 border-emerald-300 dark:border-emerald-500/40',
+        textClass: 'text-emerald-800 dark:text-emerald-300 font-semibold',
+        badgeClass: 'bg-emerald-200 dark:bg-emerald-800/60 text-emerald-900 dark:text-emerald-200',
+        subTextClass: 'text-emerald-700 dark:text-emerald-300',
+        intensityLevel: 'Mérsékelt (+1.5% - +3%)',
+        indicatorColor: 'bg-emerald-500 dark:bg-emerald-400',
+      };
+    }
+    // Mild Gain: 0% to +1.5%
+    if (ret > 0) {
+      return {
+        tileBg: 'bg-emerald-50 dark:bg-emerald-500/20 text-emerald-900 dark:text-emerald-200 border-emerald-200 dark:border-emerald-500/30',
+        textClass: 'text-emerald-700 dark:text-emerald-400 font-medium',
+        badgeClass: 'bg-emerald-100 dark:bg-emerald-800/40 text-emerald-800 dark:text-emerald-300',
+        subTextClass: 'text-emerald-600 dark:text-emerald-400',
+        intensityLevel: 'Enyhe (0% - +1.5%)',
+        indicatorColor: 'bg-emerald-400 dark:bg-emerald-500',
+      };
+    }
+    // Flat: 0%
+    if (ret === 0) {
+      return {
+        tileBg: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700',
+        textClass: 'text-slate-700 dark:text-slate-300',
+        badgeClass: 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400',
+        subTextClass: 'text-slate-500 dark:text-slate-400',
+        intensityLevel: 'Nullszaldó (0%)',
+        indicatorColor: 'bg-slate-400',
+      };
+    }
+    // Mild Loss: 0% to -1.5%
+    if (ret > -1.5) {
+      return {
+        tileBg: 'bg-rose-50 dark:bg-rose-500/20 text-rose-900 dark:text-rose-200 border-rose-200 dark:border-rose-500/30',
+        textClass: 'text-rose-700 dark:text-rose-400 font-medium',
+        badgeClass: 'bg-rose-100 dark:bg-rose-800/40 text-rose-800 dark:text-rose-300',
+        subTextClass: 'text-rose-600 dark:text-rose-400',
+        intensityLevel: 'Enyhe (0% - -1.5%)',
+        indicatorColor: 'bg-rose-400 dark:bg-rose-500',
+      };
+    }
+    // Moderate Loss: -1.5% to -3.0%
+    if (ret > -3.0) {
+      return {
+        tileBg: 'bg-rose-100 dark:bg-rose-500/50 text-rose-950 dark:text-rose-100 border-rose-300 dark:border-rose-500/50',
+        textClass: 'text-rose-800 dark:text-rose-200 font-semibold',
+        badgeClass: 'bg-rose-200 dark:bg-rose-800/70 text-rose-900 dark:text-rose-200',
+        subTextClass: 'text-rose-700 dark:text-rose-300',
+        intensityLevel: 'Mérsékelt (-1.5% - -3%)',
+        indicatorColor: 'bg-rose-500 dark:bg-rose-400',
+      };
+    }
+    // Severe Loss: <= -3.0%
+    return {
+      tileBg: 'bg-rose-600 dark:bg-rose-600 text-white border-rose-500 shadow-sm shadow-rose-600/25',
+      textClass: 'text-white font-bold',
+      badgeClass: 'bg-rose-800 text-rose-100',
+      subTextClass: 'text-rose-100',
+      intensityLevel: 'Jelentős (≤ -3%)',
+      indicatorColor: 'bg-rose-300',
+    };
+  };
 
   // Filter history data based on timeframe
   const filteredHistory = useMemo(() => {
@@ -287,7 +542,379 @@ export const AnalyticsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 4. Bottom Grid: Asset Allocation & Monthly Returns Bar */}
+      {/* 4. Yearly Performance Heatmap (Current Year & Color-coded Intensity) */}
+      <div 
+        id="yearly-performance-heatmap-card"
+        className="rounded-xl border border-slate-200 dark:border-slate-800/80 bg-white dark:bg-slate-900/50 p-4 sm:p-6 shadow-xs space-y-5"
+      >
+        {/* Heatmap Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-3 border-b border-slate-200 dark:border-slate-800">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                <Flame className="h-4 w-4" />
+              </span>
+              <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+                Éves Teljesítmény Hőtérkép ({heatmapYear})
+              </h3>
+              {heatmapYear === availableHeatmapYears[0] && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/30">
+                  Aktuális Év
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Havi relatív hozamok színezett intenzitása a nyereség/veszteség százalékos skáláján
+            </p>
+          </div>
+
+          {/* Year selector */}
+          <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800 self-start sm:self-auto">
+            {availableHeatmapYears.map(year => (
+              <button
+                key={year}
+                id={`heatmap-year-btn-${year}`}
+                onClick={() => {
+                  setHeatmapYear(year);
+                  setInspectedMonthNum(null);
+                }}
+                className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                  heatmapYear === year
+                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs font-bold'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                {year} {year === availableHeatmapYears[0] ? '(Aktuális)' : ''}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Yearly KPI Metric Ribbon */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/70">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Göngyölített Éves Hozam</span>
+            <div className={`mt-0.5 text-base sm:text-lg font-bold font-mono ${
+              heatmapYearStats.compoundedYtd >= 0 
+                ? 'text-emerald-600 dark:text-emerald-400' 
+                : 'text-rose-600 dark:text-rose-400'
+            }`}>
+              {heatmapYearStats.compoundedYtd >= 0 ? '+' : ''}{heatmapYearStats.compoundedYtd}%
+            </div>
+            <span className="text-[10px] text-slate-400 dark:text-slate-500">
+              {heatmapYearStats.completedCount} lezárt hónap alapján
+            </span>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/70">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Realizált Éves Nyereség</span>
+            <div className={`mt-0.5 text-base sm:text-lg font-bold font-mono ${
+              heatmapYearStats.totalRealizedProfit >= 0 
+                ? 'text-emerald-600 dark:text-emerald-400' 
+                : 'text-rose-600 dark:text-rose-400'
+            }`}>
+              {heatmapYearStats.totalRealizedProfit >= 0 ? '+' : ''}${heatmapYearStats.totalRealizedProfit.toLocaleString('hu-HU')} USD
+            </div>
+            <span className="text-[10px] text-slate-400 dark:text-slate-500">
+              {heatmapYearStats.totalTrades} sikeres ügylet
+            </span>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/70">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Nyerési Arány (Win Rate)</span>
+            <div className="mt-0.5 text-base sm:text-lg font-bold font-mono text-teal-600 dark:text-teal-400">
+              {heatmapYearStats.winRate}%
+            </div>
+            <span className="text-[10px] text-slate-400 dark:text-slate-500">
+              {heatmapYearStats.winCount} nyertes / {heatmapYearStats.lossCount} vesztes hónap
+            </span>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/70">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Legjobb Hónap</span>
+            <div className="mt-0.5 text-sm sm:text-base font-bold text-emerald-600 dark:text-emerald-400 truncate">
+              {heatmapYearStats.bestMonth 
+                ? `${heatmapYearStats.bestMonth.monthName} (+${heatmapYearStats.bestMonth.returnPercent}%)` 
+                : 'Nincs adat'}
+            </div>
+            <span className="text-[10px] text-slate-400 dark:text-slate-500">
+              {heatmapYearStats.bestMonth?.bestAsset ? `Húzóeszköz: ${heatmapYearStats.bestMonth.bestAsset}` : 'N/A'}
+            </span>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/70 col-span-2 sm:col-span-1">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Leggyengébb Hónap</span>
+            <div className="mt-0.5 text-sm sm:text-base font-bold text-rose-600 dark:text-rose-400 truncate">
+              {heatmapYearStats.worstMonth 
+                ? `${heatmapYearStats.worstMonth.monthName} (${heatmapYearStats.worstMonth.returnPercent >= 0 ? '+' : ''}${heatmapYearStats.worstMonth.returnPercent}%)` 
+                : 'Nincs adat'}
+            </div>
+            <span className="text-[10px] text-slate-400 dark:text-slate-500">
+              Átlag: +{heatmapYearStats.avgMonthlyReturn}% / hó
+            </span>
+          </div>
+        </div>
+
+        {/* 12-Month Heatmap Visualization Grid */}
+        <div>
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5 text-emerald-500 dark:text-emerald-400" />
+              12 Hónapos Hozammátrix és Hőtérkép Csempék
+            </span>
+            <span className="text-[11px] text-slate-400 dark:text-slate-500">
+              Kattints egy hónapra a részletes adatok megtekintéséhez
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-12 gap-2.5">
+            {currentYearMonths.map(m => {
+              const info = getIntensityInfo(m.data?.returnPercent);
+              const isInspected = activeInspectedMonth?.month === m.num && m.data;
+
+              return (
+                <button
+                  key={m.num}
+                  id={`heatmap-tile-month-${m.num}`}
+                  type="button"
+                  onClick={() => {
+                    if (m.data) {
+                      setInspectedMonthNum(m.num);
+                    }
+                  }}
+                  disabled={!m.data}
+                  className={`relative p-3 rounded-xl border flex flex-col justify-between text-left transition-all duration-150 ${
+                    m.data ? 'cursor-pointer hover:scale-[1.02]' : 'cursor-default opacity-75'
+                  } ${info.tileBg} ${
+                    isInspected 
+                      ? 'ring-2 ring-emerald-500 dark:ring-emerald-400 ring-offset-2 ring-offset-white dark:ring-offset-slate-900 shadow-md' 
+                      : ''
+                  }`}
+                >
+                  {/* Top: Month Short & Number */}
+                  <div className="flex items-center justify-between text-[11px] w-full">
+                    <span className="font-bold tracking-tight">{m.short}</span>
+                    <span className="text-[10px] opacity-75 font-mono">#{m.num < 10 ? `0${m.num}` : m.num}</span>
+                  </div>
+
+                  {/* Middle: Return Percent */}
+                  <div className="my-2 text-center">
+                    {m.data ? (
+                      <div className={`text-base sm:text-lg font-bold font-mono tracking-tight leading-none ${info.textClass}`}>
+                        {m.data.returnPercent >= 0 ? '+' : ''}{m.data.returnPercent}%
+                      </div>
+                    ) : (
+                      <div className="text-sm font-mono text-slate-400 dark:text-slate-600 font-semibold">
+                        --
+                      </div>
+                    )}
+
+                    {/* Dollar profit or status */}
+                    <div className={`text-[10px] mt-1 truncate ${info.subTextClass}`}>
+                      {m.data ? (
+                        <span>
+                          {m.data.realizedProfit >= 0 ? '+' : ''}${Math.abs(m.data.realizedProfit) >= 1000 ? `${(m.data.realizedProfit / 1000).toFixed(1)}k` : m.data.realizedProfit}
+                        </span>
+                      ) : (
+                        <span>Függőben</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Bottom: Asset tag or win rate */}
+                  <div className="w-full pt-1.5 border-t border-black/10 dark:border-white/10 flex items-center justify-between text-[9px]">
+                    {m.data ? (
+                      <>
+                        <span className="font-mono font-semibold uppercase">{m.data.bestAsset}</span>
+                        <span className="opacity-90">{m.data.winRate}% W</span>
+                      </>
+                    ) : (
+                      <span className="w-full text-center text-[9px] opacity-70">Előttünk álló</span>
+                    )}
+                  </div>
+
+                  {/* Color intensity indicator bar at the bottom */}
+                  <div className={`absolute bottom-0 left-2 right-2 h-1 rounded-t-full ${info.indicatorColor}`} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Selected Month Detail Inspector Card */}
+        {activeInspectedMonth && (
+          <div 
+            id="heatmap-inspected-month-details"
+            className="rounded-xl p-3.5 sm:p-4 bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-4 animate-in fade-in duration-200"
+          >
+            <div className="flex items-center gap-3">
+              <div className={`p-2.5 rounded-xl ${
+                activeInspectedMonth.returnPercent >= 0 
+                  ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-500/30' 
+                  : 'bg-rose-100 dark:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-500/30'
+              }`}>
+                {activeInspectedMonth.returnPercent >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                    {heatmapYear} {activeInspectedMonth.monthName} Részletes Teljesítmény
+                  </h4>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold ${
+                    activeInspectedMonth.returnPercent >= 0 
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300' 
+                      : 'bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-300'
+                  }`}>
+                    {activeInspectedMonth.returnPercent >= 0 ? 'Nyereséges Hónap' : 'Veszteséges Hónap'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Kattints bármelyik másik hónapra a fenti hőtérképen az összehasonlításhoz
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+              <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 block">Havi Hozam</span>
+                <span className={`text-sm font-bold ${
+                  activeInspectedMonth.returnPercent >= 0 
+                    ? 'text-emerald-600 dark:text-emerald-400' 
+                    : 'text-rose-600 dark:text-rose-400'
+                }`}>
+                  {activeInspectedMonth.returnPercent >= 0 ? '+' : ''}{activeInspectedMonth.returnPercent}%
+                </span>
+              </div>
+
+              <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 block">Realizált Profit</span>
+                <span className={`text-sm font-bold ${
+                  activeInspectedMonth.realizedProfit >= 0 
+                    ? 'text-emerald-600 dark:text-emerald-400' 
+                    : 'text-rose-600 dark:text-rose-400'
+                }`}>
+                  {activeInspectedMonth.realizedProfit >= 0 ? '+' : ''}${activeInspectedMonth.realizedProfit.toLocaleString('hu-HU')} USD
+                </span>
+              </div>
+
+              <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 block">Kötések / Win Rate</span>
+                <span className="text-sm font-bold text-slate-900 dark:text-white">
+                  {activeInspectedMonth.tradesCount} db ({activeInspectedMonth.winRate}%)
+                </span>
+              </div>
+
+              <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 block">Top Eszköz</span>
+                <span className="text-sm font-bold text-teal-600 dark:text-teal-400">
+                  {activeInspectedMonth.bestAsset}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Quarterly Aggregation Cards */}
+        <div>
+          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-2">
+            Negyedéves Göngyölített Eredmények ({heatmapYear})
+          </span>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {quarterlyData.map(q => (
+              <div 
+                key={q.id}
+                id={`heatmap-quarter-${q.id}`}
+                className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 flex flex-col justify-between"
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-slate-900 dark:text-white">{q.id}</span>
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500">{q.subtitle}</span>
+                </div>
+
+                <div className="my-1.5">
+                  {q.returnPct !== null ? (
+                    <div className={`text-base font-bold font-mono ${
+                      q.returnPct >= 0 
+                        ? 'text-emerald-600 dark:text-emerald-400' 
+                        : 'text-rose-600 dark:text-rose-400'
+                    }`}>
+                      {q.returnPct >= 0 ? '+' : ''}{q.returnPct}%
+                    </div>
+                  ) : (
+                    <div className="text-sm font-mono text-slate-400 dark:text-slate-600 font-semibold">
+                      Függőben
+                    </div>
+                  )}
+
+                  <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                    {q.returnPct !== null ? (
+                      <span>{q.profit >= 0 ? '+' : ''}${q.profit.toLocaleString('hu-HU')} USD</span>
+                    ) : (
+                      <span>0 lezárt hónap</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="text-[10px] text-slate-400 dark:text-slate-500 border-t border-slate-200 dark:border-slate-800/80 pt-1">
+                  {q.completedCount}/3 hónap lezárva
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Color-Coded Intensity Legend */}
+        <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 shrink-0">
+            <Sparkles className="h-3.5 w-3.5 text-emerald-500 dark:text-emerald-400" />
+            <span className="font-semibold">Hozam Intenzitási Skála:</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <div className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded bg-rose-600 text-white font-mono text-[8px] flex items-center justify-center font-bold">≤-3</span>
+              <span className="text-slate-600 dark:text-slate-400">Jelentős mínusz (≤ -3%)</span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded bg-rose-100 dark:bg-rose-500/50 border border-rose-300 dark:border-rose-500"></span>
+              <span className="text-slate-600 dark:text-slate-400">Mérsékelt (-1.5% - -3%)</span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded bg-rose-50 dark:bg-rose-500/20 border border-rose-200 dark:border-rose-500/30"></span>
+              <span className="text-slate-600 dark:text-slate-400">Enyhe (0% - -1.5%)</span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded bg-slate-100 dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-700"></span>
+              <span className="text-slate-600 dark:text-slate-400">0% / Függőben</span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded bg-emerald-50 dark:bg-emerald-500/20 border border-emerald-200 dark:border-emerald-500/30"></span>
+              <span className="text-slate-600 dark:text-slate-400">Enyhe (0% - +1.5%)</span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded bg-emerald-100 dark:bg-emerald-500/40 border border-emerald-300 dark:border-emerald-500/40"></span>
+              <span className="text-slate-600 dark:text-slate-400">Mérsékelt (+1.5% - +3%)</span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded bg-emerald-500 text-white font-mono text-[8px] flex items-center justify-center font-bold">≥3</span>
+              <span className="text-slate-600 dark:text-slate-400">Erős (+3% - +5%)</span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded bg-emerald-600 dark:bg-emerald-400 text-white dark:text-slate-950 font-mono text-[8px] flex items-center justify-center font-bold">≥5</span>
+              <span className="text-slate-600 dark:text-slate-400 font-medium">Kiemelkedő (≥ +5%)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 5. Bottom Grid: Asset Allocation & Monthly Returns Bar */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* Allocation Pie Chart */}
