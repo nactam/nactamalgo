@@ -1,0 +1,6 @@
+{
+  "name": "eToro Portfólió Elemző",
+  "description": "Valós idejű eToro portfóliókövető és hozamelemző felület interaktív diagramokkal, havi kimutatásokkal, kockázati mutatókkal, árriasztásokkal és Excel exporttal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
